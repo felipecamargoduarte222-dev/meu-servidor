@@ -1,147 +1,181 @@
-import { randomUUID } from "node:crypto";
+import { openDb } from "./database.js";
 
-// Arrays em memória (Banco de dados)
-const clientes = [];
+// Listas salvas na memória (para as rotas que continuam em memória)
 const categorias = [];
 const fornecedores = [];
 const produtos = [];
 
-// Função auxiliar para capturar o :id na URL (ex: /clientes/123)
-function buildRoutePath(path) {
-  const routeParametersRegex = /:([a-zA-Z]+)/g;
-  const pathWithParams = path.replaceAll(
-    routeParametersRegex,
-    "(?<$1>[a-z0-9\\-_]+)",
-  );
-  return new RegExp(`^${pathWithParams}$`);
-}
+// Contadores simples para gerar os IDs (1, 2, 3...)
+let idCategoria = 1;
+let idFornecedor = 1;
+let idProduto = 1;
 
 export const routes = [
-  // ROTAS DE CLIENTES (/clientes)
-
+  // ================= CLIENTES (COM SQLITE) =================
   {
     method: "GET",
-    path: buildRoutePath("/clientes"),
-    handler: (req, res) => {
-      return res.end(JSON.stringify(clientes));
+    path: "/clientes",
+    handler: async (req, res) => {
+      try {
+        const db = await openDb();
+        const clientes = await db.all("SELECT * FROM clientes");
+        return res.writeHead(200).end(JSON.stringify(clientes));
+      } catch (erro) {
+        return res
+          .writeHead(500)
+          .end(
+            JSON.stringify({
+              erro: "Erro ao buscar clientes no banco de dados.",
+            }),
+          );
+      }
     },
   },
   {
     method: "POST",
-    path: buildRoutePath("/clientes"),
-    handler: (req, res) => {
-      const { nome, email, telefone, ativo } = req.body || {};
+    path: "/clientes",
+    handler: async (req, res) => {
+      try {
+        const { nome, email, telefone, ativo } = req.body || {};
 
-      if (!nome || !email || !telefone) {
-        return res.writeHead(400).end(
-          JSON.stringify({
-            erro: "Nome, email e telefone são obrigatórios.",
-          }),
+        if (!nome || !email || !telefone) {
+          return res
+            .writeHead(400)
+            .end(
+              JSON.stringify({
+                erro: "Nome, email e telefone são obrigatórios.",
+              }),
+            );
+        }
+
+        const db = await openDb();
+
+        // Verifica se o email já existe no banco
+        const clienteExistente = await db.get(
+          "SELECT * FROM clientes WHERE email = ?",
+          [email],
         );
-      }
+        if (clienteExistente) {
+          return res
+            .writeHead(409)
+            .end(JSON.stringify({ erro: "Esse email já foi cadastrado!" }));
+        }
 
-      //Impedir cadastro se já existir cliente com o mesmo email usando .some()
-      const emailJaExiste = clientes.some((cliente) => cliente.email === email);
-      if (emailJaExiste) {
-        return res.writeHead(409).end(
-          JSON.stringify({
-            erro: "Já existe um cliente cadastrado com este email.",
-          }),
+        const ativoValor = ativo !== undefined ? (ativo ? 1 : 0) : 1;
+
+        const resultado = await db.run(
+          "INSERT INTO clientes (nome, email, telefone, ativo) VALUES (?, ?, ?, ?)",
+          [nome, email, telefone, ativoValor],
         );
+
+        const novoCliente = {
+          id: resultado.lastID,
+          nome,
+          email,
+          telefone,
+          ativo: Boolean(ativoValor),
+        };
+
+        return res.writeHead(201).end(JSON.stringify(novoCliente));
+      } catch (erro) {
+        return res
+          .writeHead(500)
+          .end(
+            JSON.stringify({
+              erro: "Erro interno ao salvar cliente no banco.",
+            }),
+          );
       }
-
-      const novoCliente = {
-        id: randomUUID(),
-        nome,
-        email,
-        telefone,
-        ativo: ativo !== undefined ? Boolean(ativo) : true,
-      };
-
-      clientes.push(novoCliente);
-      return res.writeHead(201).end(JSON.stringify(novoCliente));
     },
   },
   {
     method: "PUT",
-    path: buildRoutePath("/clientes/:id"),
-    handler: (req, res) => {
-      const { id } = req.params;
-      const { nome, email, telefone, ativo } = req.body || {};
+    path: "/clientes/:id",
+    handler: async (req, res) => {
+      try {
+        const id = Number(req.id);
+        const { nome, email, telefone, ativo } = req.body || {};
 
-      const index = clientes.findIndex((c) => c.id === id);
-      if (index === -1) {
-        return res
-          .writeHead(404)
-          .end(JSON.stringify({ erro: "Cliente não encontrado." }));
-      }
+        const db = await openDb();
+        const cliente = await db.get("SELECT * FROM clientes WHERE id = ?", [
+          id,
+        ]);
 
-      // Verifica se o novo email já pertence a outro cliente
-      if (email) {
-        const emailEmUso = clientes.some(
-          (c) => c.email === email && c.id !== id,
-        );
-        if (emailEmUso) {
-          return res.writeHead(409).end(
-            JSON.stringify({
-              erro: "Email já está em uso por outro cliente.",
-            }),
-          );
+        if (!cliente) {
+          return res
+            .writeHead(404)
+            .end(JSON.stringify({ erro: "Cliente não encontrado" }));
         }
+
+        const novoNome = nome ?? cliente.nome;
+        const novoEmail = email ?? cliente.email;
+        const novoTelefone = telefone ?? cliente.telefone;
+        const novoAtivo = ativo !== undefined ? (ativo ? 1 : 0) : cliente.ativo;
+
+        await db.run(
+          "UPDATE clientes SET nome = ?, email = ?, telefone = ?, ativo = ? WHERE id = ?",
+          [novoNome, novoEmail, novoTelefone, novoAtivo, id],
+        );
+
+        return res.writeHead(200).end(
+          JSON.stringify({
+            id,
+            nome: novoNome,
+            email: novoEmail,
+            telefone: novoTelefone,
+            ativo: Boolean(novoAtivo),
+          }),
+        );
+      } catch (erro) {
+        return res
+          .writeHead(500)
+          .end(JSON.stringify({ erro: "Erro ao atualizar cliente no banco." }));
       }
-
-      clientes[index] = {
-        ...clientes[index],
-        nome: nome ?? clientes[index].nome,
-        email: email ?? clientes[index].email,
-        telefone: telefone ?? clientes[index].telefone,
-        ativo: ativo !== undefined ? Boolean(ativo) : clientes[index].ativo,
-      };
-
-      return res.writeHead(200).end(JSON.stringify(clientes[index]));
     },
   },
   {
     method: "DELETE",
-    path: buildRoutePath("/clientes/:id"),
-    handler: (req, res) => {
-      const { id } = req.params;
-      const index = clientes.findIndex((c) => c.id === id);
+    path: "/clientes/:id",
+    handler: async (req, res) => {
+      try {
+        const id = Number(req.id);
+        const db = await openDb();
 
-      if (index === -1) {
+        const resultado = await db.run("DELETE FROM clientes WHERE id = ?", [
+          id,
+        ]);
+
+        if (resultado.changes === 0) {
+          return res
+            .writeHead(404)
+            .end(JSON.stringify({ erro: "Cliente não encontrado" }));
+        }
+
+        return res.writeHead(204).end();
+      } catch (erro) {
         return res
-          .writeHead(404)
-          .end(JSON.stringify({ erro: "Cliente não encontrado." }));
+          .writeHead(500)
+          .end(JSON.stringify({ erro: "Erro ao deletar cliente no banco." }));
       }
-
-      clientes.splice(index, 1);
-      return res.writeHead(204).end();
     },
   },
 
-  // ROTAS DE CATEGORIAS (/categorias)
-
+  // ================= CATEGORIAS (EM MEMÓRIA) =================
   {
     method: "GET",
-    path: buildRoutePath("/categorias"),
+    path: "/categorias",
     handler: (req, res) => {
-      return res.end(JSON.stringify(categorias));
+      return res.writeHead(200).end(JSON.stringify(categorias));
     },
   },
   {
     method: "POST",
-    path: buildRoutePath("/categorias"),
+    path: "/categorias",
     handler: (req, res) => {
-      const { nome, descricao } = req.body || {};
-
-      if (!nome || !descricao) {
-        return res
-          .writeHead(400)
-          .end(JSON.stringify({ erro: "Nome e descrição são obrigatórios." }));
-      }
+      const { nome, descricao } = req.body;
 
       const novaCategoria = {
-        id: randomUUID(),
+        id: idCategoria++,
         nome,
         descricao,
       };
@@ -152,38 +186,35 @@ export const routes = [
   },
   {
     method: "PUT",
-    path: buildRoutePath("/categorias/:id"),
+    path: "/categorias/:id",
     handler: (req, res) => {
-      const { id } = req.params;
-      const { nome, descricao } = req.body || {};
+      const id = Number(req.id);
+      const { nome, descricao } = req.body;
 
-      const index = categorias.findIndex((cat) => cat.id === id);
-      if (index === -1) {
+      const categoria = categorias.find((c) => c.id === id);
+      if (!categoria) {
         return res
           .writeHead(404)
-          .end(JSON.stringify({ erro: "Categoria não encontrada." }));
+          .end(JSON.stringify({ erro: "Categoria não encontrada" }));
       }
 
-      categorias[index] = {
-        ...categorias[index],
-        nome: nome ?? categorias[index].nome,
-        descricao: descricao ?? categorias[index].descricao,
-      };
+      categoria.nome = nome ?? categoria.nome;
+      categoria.descricao = descricao ?? categoria.descricao;
 
-      return res.writeHead(200).end(JSON.stringify(categorias[index]));
+      return res.writeHead(200).end(JSON.stringify(categoria));
     },
   },
   {
     method: "DELETE",
-    path: buildRoutePath("/categorias/:id"),
+    path: "/categorias/:id",
     handler: (req, res) => {
-      const { id } = req.params;
-      const index = categorias.findIndex((cat) => cat.id === id);
+      const id = Number(req.id);
+      const index = categorias.findIndex((c) => c.id === id);
 
       if (index === -1) {
         return res
           .writeHead(404)
-          .end(JSON.stringify({ erro: "Categoria não encontrada." }));
+          .end(JSON.stringify({ erro: "Categoria não encontrada" }));
       }
 
       categorias.splice(index, 1);
@@ -191,85 +222,118 @@ export const routes = [
     },
   },
 
-  // ROTAS DE PRODUTOS (/produtos) Para testar o desafio de Categoria
-
+  // ================= PRODUTOS (EM MEMÓRIA) =================
   {
     method: "GET",
-    path: buildRoutePath("/produtos"),
+    path: "/produtos",
     handler: (req, res) => {
-      return res.end(JSON.stringify(produtos));
+      return res.writeHead(200).end(JSON.stringify(produtos));
     },
   },
   {
     method: "POST",
-    path: buildRoutePath("/produtos"),
+    path: "/produtos",
     handler: (req, res) => {
-      const { nome, preco, categoriaId } = req.body || {};
+      const { nome, preco, categoriaId } = req.body;
 
-      if (!nome || preco === undefined || !categoriaId) {
-        return res.writeHead(400).end(
-          JSON.stringify({
-            erro: "Nome, preço e categoriaId são obrigatórios.",
-          }),
-        );
-      }
-
-      //Validar se a categoria enviada realmente existe no array de categorias
-      const categoriaExiste = categorias.some((cat) => cat.id === categoriaId);
+      const categoriaExiste = categorias.some(
+        (c) => c.id === Number(categoriaId),
+      );
       if (!categoriaExiste) {
         return res
           .writeHead(400)
-          .end(JSON.stringify({ erro: "A categoria informada não existe." }));
+          .end(JSON.stringify({ erro: "Categoria inválida ou inexistente!" }));
       }
 
       const novoProduto = {
-        id: randomUUID(),
+        id: idProduto++,
         nome,
         preco,
-        categoriaId,
+        categoriaId: Number(categoriaId),
       };
 
       produtos.push(novoProduto);
       return res.writeHead(201).end(JSON.stringify(novoProduto));
     },
   },
+  {
+    method: "PUT",
+    path: "/produtos/:id",
+    handler: (req, res) => {
+      const id = Number(req.id);
+      const { nome, preco, categoriaId } = req.body;
 
-  // ROTAS DE FORNECEDORES (/fornecedores)
+      const produto = produtos.find((p) => p.id === id);
+      if (!produto) {
+        return res
+          .writeHead(404)
+          .end(JSON.stringify({ erro: "Produto não encontrado" }));
+      }
 
+      if (categoriaId) {
+        const categoriaExiste = categorias.some(
+          (c) => c.id === Number(categoriaId),
+        );
+        if (!categoriaExiste) {
+          return res
+            .writeHead(400)
+            .end(
+              JSON.stringify({ erro: "Categoria inválida ou inexistente!" }),
+            );
+        }
+      }
+
+      produto.nome = nome ?? produto.nome;
+      produto.preco = preco ?? produto.preco;
+      produto.categoriaId = categoriaId
+        ? Number(categoriaId)
+        : produto.categoriaId;
+
+      return res.writeHead(200).end(JSON.stringify(produto));
+    },
+  },
+  {
+    method: "DELETE",
+    path: "/produtos/:id",
+    handler: (req, res) => {
+      const id = Number(req.id);
+      const index = produtos.findIndex((p) => p.id === id);
+
+      if (index === -1) {
+        return res
+          .writeHead(404)
+          .end(JSON.stringify({ erro: "Produto não encontrado" }));
+      }
+
+      produtos.splice(index, 1);
+      return res.writeHead(204).end();
+    },
+  },
+
+  // ================= FORNECEDORES (EM MEMÓRIA) =================
   {
     method: "GET",
-    path: buildRoutePath("/fornecedores"),
+    path: "/fornecedores",
     handler: (req, res) => {
-      return res.end(JSON.stringify(fornecedores));
+      return res.writeHead(200).end(JSON.stringify(fornecedores));
     },
   },
   {
     method: "POST",
-    path: buildRoutePath("/fornecedores"),
+    path: "/fornecedores",
     handler: (req, res) => {
-      const { razaoSocial, cnpj, contato } = req.body || {};
+      const { razaoSocial, cnpj, contato } = req.body;
 
-      if (!razaoSocial || !cnpj || !contato) {
-        return res.writeHead(400).end(
-          JSON.stringify({
-            erro: "razão social, CNPJ e contato são obrigatórios.",
-          }),
-        );
-      }
-
-      // DESAFIO EXTRA: Validar se o CNPJ tem exatamente 14 caracteres
-      if (String(cnpj).length !== 14) {
-        return res.writeHead(400).end(
-          JSON.stringify({
-            erro: "O CNPJ deve conter exatamente 14 caracteres.",
-          }),
-        );
+      if (!cnpj || cnpj.length !== 14) {
+        return res
+          .writeHead(400)
+          .end(JSON.stringify({ erro: "O CNPJ precisa ter 14 caracteres!" }));
       }
 
       const novoFornecedor = {
-        id: randomUUID(),
+        id: idFornecedor++,
         razaoSocial,
-        cnpj: String(cnpj),
+        cnpj,
         contato,
       };
 
@@ -279,47 +343,42 @@ export const routes = [
   },
   {
     method: "PUT",
-    path: buildRoutePath("/fornecedores/:id"),
+    path: "/fornecedores/:id",
     handler: (req, res) => {
-      const { id } = req.params;
-      const { razaoSocial, cnpj, contato } = req.body || {};
+      const id = Number(req.id);
+      const { razaoSocial, cnpj, contato } = req.body;
 
-      const index = fornecedores.findIndex((f) => f.id === id);
-      if (index === -1) {
+      const fornecedor = fornecedores.find((f) => f.id === id);
+      if (!fornecedor) {
         return res
           .writeHead(404)
-          .end(JSON.stringify({ erro: "fornecedor não encontrado." }));
+          .end(JSON.stringify({ erro: "Fornecedor não encontrado" }));
       }
 
-      if (cnpj !== undefined && String(cnpj).length !== 14) {
-        return res.writeHead(400).end(
-          JSON.stringify({
-            erro: "O CNPJ deve conter exatamente 14 caracteres.",
-          }),
-        );
+      if (cnpj && cnpj.length !== 14) {
+        return res
+          .writeHead(400)
+          .end(JSON.stringify({ erro: "O CNPJ precisa ter 14 caracteres!" }));
       }
 
-      fornecedores[index] = {
-        ...fornecedores[index],
-        razaoSocial: razaoSocial ?? fornecedores[index].razaoSocial,
-        cnpj: cnpj ? String(cnpj) : fornecedores[index].cnpj,
-        contato: contato ?? fornecedores[index].contato,
-      };
+      fornecedor.razaoSocial = razaoSocial ?? fornecedor.razaoSocial;
+      fornecedor.cnpj = cnpj ?? fornecedor.cnpj;
+      fornecedor.contato = contato ?? fornecedor.contato;
 
-      return res.writeHead(200).end(JSON.stringify(fornecedores[index]));
+      return res.writeHead(200).end(JSON.stringify(fornecedor));
     },
   },
   {
     method: "DELETE",
-    path: buildRoutePath("/fornecedores/:id"),
+    path: "/fornecedores/:id",
     handler: (req, res) => {
-      const { id } = req.params;
+      const id = Number(req.id);
       const index = fornecedores.findIndex((f) => f.id === id);
 
       if (index === -1) {
         return res
           .writeHead(404)
-          .end(JSON.stringify({ erro: "Fornecedor não encontrado." }));
+          .end(JSON.stringify({ erro: "Fornecedor não encontrado" }));
       }
 
       fornecedores.splice(index, 1);
