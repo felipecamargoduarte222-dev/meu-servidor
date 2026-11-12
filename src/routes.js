@@ -21,13 +21,11 @@ export const routes = [
         const clientes = await db.all("SELECT * FROM clientes");
         return res.writeHead(200).end(JSON.stringify(clientes));
       } catch (erro) {
-        return res
-          .writeHead(500)
-          .end(
-            JSON.stringify({
-              erro: "Erro ao buscar clientes no banco de dados.",
-            }),
-          );
+        return res.writeHead(500).end(
+          JSON.stringify({
+            erro: "Erro ao buscar clientes no banco de dados.",
+          }),
+        );
       }
     },
   },
@@ -39,13 +37,11 @@ export const routes = [
         const { nome, email, telefone, ativo } = req.body || {};
 
         if (!nome || !email || !telefone) {
-          return res
-            .writeHead(400)
-            .end(
-              JSON.stringify({
-                erro: "Nome, email e telefone são obrigatórios.",
-              }),
-            );
+          return res.writeHead(400).end(
+            JSON.stringify({
+              erro: "Nome, email e telefone são obrigatórios.",
+            }),
+          );
         }
 
         const db = await openDb();
@@ -78,13 +74,11 @@ export const routes = [
 
         return res.writeHead(201).end(JSON.stringify(novoCliente));
       } catch (erro) {
-        return res
-          .writeHead(500)
-          .end(
-            JSON.stringify({
-              erro: "Erro interno ao salvar cliente no banco.",
-            }),
-          );
+        return res.writeHead(500).end(
+          JSON.stringify({
+            erro: "Erro interno ao salvar cliente no banco.",
+          }),
+        );
       }
     },
   },
@@ -310,7 +304,7 @@ export const routes = [
     },
   },
 
-  // ================= FORNECEDORES (EM MEMÓRIA) =================
+  //FORNECEDORES (EM MEMÓRIA)
   {
     method: "GET",
     path: "/fornecedores",
